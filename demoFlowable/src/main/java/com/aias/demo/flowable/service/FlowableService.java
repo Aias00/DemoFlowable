@@ -1,19 +1,24 @@
 package com.aias.demo.flowable.service;
 
+import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.engine.*;
+import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.DeploymentBuilder;
 import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.idm.api.Group;
+import org.flowable.idm.api.User;
+import org.flowable.image.ProcessDiagramGenerator;
 import org.flowable.task.api.Task;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStream;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -152,6 +157,42 @@ public class FlowableService {
     }
 
     /**
+     * 创建用户并将用户添加到用户组
+     *
+     * @param userId
+     * @param userName
+     * @param groupId
+     */
+    public void addUserToGroup(String userId, String userName, String groupId) {
+        User user = identityService.newUser(userId);
+        user.setDisplayName(userName);
+        user.setFirstName(userName);
+        identityService.saveUser(user);
+        identityService.createMembership(userId, groupId);
+    }
+
+    /**
+     * 查询用户组下的用户列表
+     *
+     * @param groupId
+     * @return
+     */
+    public List<User> listGroupUser(String groupId) {
+        return identityService.createUserQuery().memberOfGroup(groupId).list();
+    }
+
+    /**
+     * 根据用户id查询用户
+     *
+     * @param userId
+     * @return
+     */
+    public User queryUser(String userId) {
+        return identityService.createUserQuery().userId(userId).singleResult();
+    }
+
+
+    /**
      * 根据流程实例id查询未完成的任务列表
      *
      * @param processInstanceId
@@ -170,6 +211,18 @@ public class FlowableService {
     public Task queryTask(String taskId) {
         return taskService.createTaskQuery().taskId(taskId).singleResult();
     }
+
+    /**
+     * 查询某流程定义的实例中对应用户的待办任务列表
+     *
+     * @param processDefinitionId
+     * @param userId
+     * @return
+     */
+    public List<Task> listUserTask(String processDefinitionId, String userId) {
+        return taskService.createTaskQuery().processDefinitionId(processDefinitionId).taskCandidateOrAssigned(userId).list();
+    }
+
 
     /**
      * 设置任务为完成
@@ -208,6 +261,54 @@ public class FlowableService {
      */
     public HistoricProcessInstance queryHistoricProcessInstance(String processInstanceId) {
         return historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
+    }
+
+    /**
+     * 生成进行中的流程图
+     *
+     * @param processInstanceId
+     * @return
+     * @throws Exception
+     */
+    public byte[] queryProcessInstanceDiagram(String processInstanceId) throws Exception {
+        ProcessInstance processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();
+        if (processInstance == null) {
+            return null;
+        }
+        List<HistoricActivityInstance> historicActivityInstanceList = historyService
+                .createHistoricActivityInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .orderByHistoricActivityInstanceId().asc().list();
+
+        //得到正在执行的Activity的Id
+        List<String> activityIds = new ArrayList<>();
+        // TODO 获取flow
+        List<String> flows = new ArrayList<>();
+        for (HistoricActivityInstance historicActivityInstance : historicActivityInstanceList) {
+            activityIds.add(historicActivityInstance.getActivityId());
+        }
+        BpmnModel bpmnModel = repositoryService.getBpmnModel(processInstance.getProcessDefinitionId());
+        ProcessEngineConfiguration processEngineConfiguration = processEngine.getProcessEngineConfiguration();
+        ProcessDiagramGenerator diagramGenerator = processEngineConfiguration.getProcessDiagramGenerator();
+        InputStream in = null;
+        ByteArrayOutputStream out = null;
+        try {
+            in = diagramGenerator.generateDiagram(bpmnModel, "png", activityIds, Collections.emptyList(), processEngineConfiguration.getActivityFontName(), processEngineConfiguration.getLabelFontName(), processEngineConfiguration.getAnnotationFontName(), null, 1.0, false);
+            out = new ByteArrayOutputStream();
+            byte[] buf = new byte[1024];
+            int legth = 0;
+            while ((legth = in.read(buf)) != -1) {
+                out.write(buf, 0, legth);
+            }
+        } finally {
+            if (null != in) {
+                in.close();
+            }
+            if (null != out) {
+                out.close();
+            }
+        }
+        return out.toByteArray();
     }
 
 }
